@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Market Analysis Dashboard</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body { font-family: sans-serif; }
+        .chart-container { margin-bottom: 30px; }
+        .tooltip {
+            position: absolute;
+            padding: 8px;
+            background-color: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            pointer-events: none;
+            opacity: 0;
+        }
+        .axis path,
+        .axis line {
+            fill: none;
+            stroke: #333;
+            shape-rendering: crispEdges;
+        }
+        .axis text {
+            font-size: 12px;
+        }
+        .bar { fill: steelblue; }
+        .line {
+            fill: none;
+            stroke: steelblue;
+            stroke-width: 2px;
+        }
+        .bubble { fill: steelblue; opacity: 0.7; }
+    </style>
+</head>
+<body>
+    <h1>Market Analysis Dashboard</h1>
+
+    <div class="chart-container" id="marketShareChart">
+        <h2>Market Share</h2>
+        <div id="marketShareSVG"></div>
+    </div>
+
+    <div class="chart-container" id="revenueTrendsChart">
+        <h2>Revenue Trends</h2>
+        <div id="revenueTrendsSVG"></div>
+    </div>
+
+    <div class="chart-container" id="marketSegmentationChart">
+        <h2>Market Segmentation</h2>
+        <div id="marketSegmentationSVG"></div>
+    </div>
+
+    <script>
+        // Tooltip setup
+        const tooltip = d3.select("body").append("div")
+            .attr("class", "tooltip")
+            .style("opacity", 0);
+
+        // Function to show tooltip
+        const showTooltip = (event, content) => {
+            tooltip.transition()
+                .duration(200)
+                .style("opacity", .9);
+            tooltip.html(content)
+                .style("left", (event.pageX) + "px")
+                .style("top", (event.pageY - 28) + "px");
+        };
+
+        // Function to hide tooltip
+        const hideTooltip = () => {
+            tooltip.transition()
+                .duration(500)
+                .style("opacity", 0);
+        };
+
+        // 1. Market Share Bar Chart
+        d3.json("/api/marketShare").then(data => {
+            const margin = {top: 20, right: 20, bottom: 30, left: 60};
+            const width = 500 - margin.left - margin.right;
+            const height = 300 - margin.top - margin.bottom;
+
+            const svg = d3.select("#marketShareSVG")
+                .append("svg")
+                .attr("width", width + margin.left + margin.right)
+                .attr("height", height + margin.top + margin.bottom)
+                .append("g")
+                .attr("transform", `translate(${margin.left},${margin.top})`);
+
+            const x = d3.scaleBand()
+                .range([0, width])
+                .padding(0.1)
+                .domain(data.map(d => d.company));
+
+            const y = d3.scaleLinear()
+                .range([height, 0])
+                .domain([0, d3.max(data, d => d.marketShare)]);
+
+            svg.append("g")
+                .attr("transform", `translate(0,${height})`)
+                .attr("class", "axis")
+                .call(d3.axisBottom(x));
+
+            svg.append("g")
+                .attr("class", "axis")
+                .call(d3.axisLeft(y));
+
+            svg.selectAll(".bar")
+                .data(data)
+                .enter().append("rect")
+                .attr("class", "bar")
+                .attr("x", d => x(d.company))
+                .attr("width", x.bandwidth())
+                .attr("y", d => y(0)) // Start from bottom and animate up
+                .attr("height", 0)
+                .on("mouseover", (event, d) => {
+                    showTooltip(event, `${d.company}<br>Market Share: ${(d.marketShare * 100).toFixed(2)}%`);
+                })
+                .on("mouseout", hideTooltip)
+                .transition() // Animation on load
+                .duration(800)
+                .delay((d, i) => i * 100)
+                .attr("y", d => y(d.marketShare))
+                .attr("height", d => height - y(d.marketShare));
+        });
+
+        // 2. Revenue Trends Line Chart
+        d3.json("/api/revenueTrends").then(data => {
+            const margin = {top: 20, right: 50, bottom: 30, left: 60}; // Increased right margin for legend
+            const width = 500 - margin.left - margin.right;
+            const height = 300 - margin.top - margin.bottom;
+
+            const svg = d3.select("#revenueTrendsSVG")
+                .append("svg")
+                .attr("width", width + margin.left + margin.right)
+                .attr("height", height + margin.top + margin.bottom)
+                .append("g")
+                .attr("transform", `translate(${margin.left},${margin.top})`);
+
+            const x = d3.scalePoint()
+                .domain(data[0].quarterlyRevenue.map(d => d.quarter))
+                .range([0, width]);
+
+            const y = d3.scaleLinear()
+                .domain([0, d3.max(data, company => d3.max(company.quarterlyRevenue, d => d.revenue))])
+                .range([height, 0]);
+
+            const color = d3.scaleOrdinal()
+                .domain(data.map(d => d.company))
+                .range(d3.schemeCategory10);
+
+            const line = d3.line()
+                .x(d => x(d.quarter))
+                .y(d => y(d.revenue));
+
+            // Draw lines
+            data.forEach(companyData => {
+                svg.append("path")
+                    .datum(companyData.quarterlyRevenue)
+                    .attr("fill", "none")
+                    .attr("stroke", color(companyData.company))
+                    .attr("stroke-width", 2)
+                    .attr("class", "line")
+                    .attr("d", line)
+                    .style("opacity", 0) // Start invisible and animate in
+                    .transition()
+                    .duration(1000)
+                    .delay(500 + data.indexOf(companyData) * 200) // Stagger animation
+                    .style("opacity", 1);
+
+                // Draw circles for data points
+                svg.selectAll(".dot-" + companyData.company.replace(/\s+/g, '-')) // Class to select dots
+                    .data(companyData.quarterlyRevenue)
+                    .enter().append("circle")
+                    .attr("class", "dot-" + companyData.company.replace(/\s+/g, '-'))
+                    .attr("cx", d => x(d.quarter))
+                    .attr("cy", d => y(d.revenue))
+                    .attr("r", 5)
+                    .attr("fill", color(companyData.company))
+                    .style("opacity", 0) // Start invisible and animate in
+                    .on("mouseover", (event, d) => {
+                        showTooltip(event, `${companyData.company}<br>${d.quarter}<br>Revenue: ${d.revenue.toFixed(2)}`);
+                    })
+                    .on("mouseout", hideTooltip)
+                    .transition()
+                    .duration(800)
+                    .delay(700 + data.indexOf(companyData) * 200) // Stagger animation
+                    .style("opacity", 1);
+            });
+
+
+            svg.append("g")
+                .attr("transform", `translate(0,${height})`)
+                .attr("class", "axis")
+                .call(d3.axisBottom(x));
+
+            svg.append("g")
+                .attr("class", "axis")
+                .call(d3.axisLeft(y));
+
+            // Legend
+            const legend = svg.append("g")
+                .attr("transform", `translate(${width + 20}, ${margin.top})`); // Position legend
+
+            data.forEach((companyData, index) => {
+                const legendY = index * 20;
+                legend.append("rect")
+                    .attr("x", 0)
+                    .attr("y", legendY - 10)
+                    .attr("width", 10)
+                    .attr("height", 10)
+                    .attr("fill", color(companyData.company));
+
+                legend.append("text")
+                    .attr("x", 15)
+                    .attr("y", legendY)
+                    .text(companyData.company)
+                    .style("font-size", "12px")
+                    .attr("alignment-baseline", "middle");
+            });
+        });
+
+        // 3. Market Segmentation Bubble Chart
+        d3.json("/api/marketSegmentation").then(data => {
+            const margin = {top: 20, right: 20, bottom: 30, left: 60};
+            const width = 500 - margin.left - margin.right;
+            const height = 300 - margin.top - margin.bottom;
+
+            const svg = d3.select("#marketSegmentationSVG")
+                .append("svg")
+                .attr("width", width + margin.left + margin.right)
+                .attr("height", height + margin.top + margin.bottom)
+                .append("g")
+                .attr("transform", `translate(${margin.left},${margin.top})`);
+
+            const x = d3.scaleBand()
+                .range([0, width])
+                .domain(data.map(d => d.segment))
+                .padding(0.1);
+
+            const y = d3.scaleLinear()
+                .range([height, 0])
+                .domain([0, d3.max(data, d => d.revenue)]);
+
+            const radiusScale = d3.scaleSqrt()
+                .domain([0, d3.max(data, d => d.revenue)])
+                .range([5, 40]); // Adjust range for bubble size
+
+            svg.append("g")
+                .attr("transform", `translate(0,${height})`)
+                .attr("class", "axis")
+                .call(d3.axisBottom(x));
+
+            svg.append("g")
+                .attr("class", "axis")
+                .call(d3.axisLeft(y));
+
+            svg.selectAll(".bubble")
+                .data(data)
+                .enter().append("circle")
+                .attr("class", "bubble")
+                .attr("cx", d => x(d.segment) + x.bandwidth() / 2) // Center bubbles in band
+                .attr("cy", height) // Start from bottom and animate up
+                .attr("r", 0)
+                .style("fill", "steelblue")
+                .style("opacity", 0.7)
+                .on("mouseover", (event, d) => {
+                    showTooltip(event, `${d.segment}<br>Revenue: ${d.revenue.toFixed(2)}<br>Growth Rate: ${(d.growthRate * 100).toFixed(2)}%`);
+                })
+                .on("mouseout", hideTooltip)
+                .transition() // Animation on load
+                .duration(1000)
+                .delay((d, i) => i * 100)
+                .attr("cy", d => y(d.revenue))
+                .attr("r", d => radiusScale(d.revenue));
+        });
+
+    </script>
+</body>
+</html>
+```
